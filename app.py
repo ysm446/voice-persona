@@ -32,7 +32,16 @@ WRITER_MODELS = {
     "0.6B": "Qwen/Qwen3-0.6B",
     "4B": "Qwen/Qwen3-4B",
     "8B": "Qwen/Qwen3-8B",
+    "14B": "Qwen/Qwen3-14B",
 }
+
+WRITER_MODEL_CHOICES = [
+    ("0.6B", "0.6B"),
+    ("1.7B", "1.7B"),
+    ("4B", "4B"),
+    ("8B", "8B"),
+    ("14B", "14B"),
+]
 
 # Map ASR-detected language names to TTS language names
 ASR_LANGUAGE_MAP = {
@@ -576,7 +585,7 @@ with gr.Blocks(title="Voice Persona") as demo:
             asr_model_size.change(fn=update_asr_model_size, inputs=asr_model_size, outputs=asr_model_info)
             gr.Markdown("### セリフ生成モデル（Qwen）")
             writer_model_size = gr.Dropdown(
-                choices=list(WRITER_MODELS.keys()),
+                choices=WRITER_MODEL_CHOICES,
                 value=default_writer_model_size,
                 label="セリフ生成モデルサイズ",
             )
