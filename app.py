@@ -30,6 +30,8 @@ ASR_MODELS = {
 WRITER_MODELS = {
     "1.7B": "Qwen/Qwen3-1.7B",
     "0.6B": "Qwen/Qwen3-0.6B",
+    "4B": "Qwen/Qwen3-4B",
+    "8B": "Qwen/Qwen3-8B",
 }
 
 # Map ASR-detected language names to TTS language names
@@ -149,6 +151,10 @@ def _list_voices() -> list[str]:
     return sorted(d.name for d in PERSONAS_DIR.iterdir() if d.is_dir())
 
 
+def _speaker_label(name: str | None) -> str:
+    return name if name else "未選択"
+
+
 def save_voice(
     name: str,
     ref_audio,
@@ -185,7 +191,7 @@ def save_voice(
         ),
         encoding="utf-8",
     )
-    return gr.Dropdown(choices=_list_voices(), value=name)
+    return gr.Dropdown(choices=_list_voices(), value=name), _speaker_label(name)
 
 
 def delete_voice(name: str):
@@ -197,7 +203,8 @@ def delete_voice(name: str):
     if voice_dir.exists():
         shutil.rmtree(str(voice_dir))
     voices = _list_voices()
-    return gr.Dropdown(choices=voices, value=voices[0] if voices else None)
+    selected = voices[0] if voices else None
+    return gr.Dropdown(choices=voices, value=selected), _speaker_label(selected)
 
 
 def load_voice(name: str):
@@ -216,6 +223,36 @@ def load_voice(name: str):
         info.get("speech_habits", ""),
         info.get("ng_phrases", ""),
         info.get("sample_lines", ""),
+    )
+
+
+def load_voice_for_form(name: str):
+    return (*load_voice(name), name, _speaker_label(name))
+
+
+def overwrite_voice(
+    selected_name: str,
+    ref_audio,
+    ref_text: str,
+    language: str,
+    speech_style: str,
+    phrase_bank: str,
+    speech_habits: str,
+    ng_phrases: str,
+    sample_lines: str,
+):
+    if not selected_name:
+        raise gr.Error("上書きする声を選択してください。")
+    return save_voice(
+        selected_name,
+        ref_audio,
+        ref_text,
+        language,
+        speech_style,
+        phrase_bank,
+        speech_habits,
+        ng_phrases,
+        sample_lines,
     )
 
 
@@ -423,18 +460,21 @@ with gr.Blocks(title="Voice Persona") as demo:
     default_asr_model_size = _load_asr_model_size_setting()
     default_writer_model_size = _load_writer_model_size_setting()
     gr.Markdown("# Voice Persona")
-    gr.Markdown(
-        "**Voice Clone**（参照音声からクローン）と **Persona**（話者管理）を利用できます。"
-    )
+    gr.Markdown("人物設定から始める、自然な音声生成")
 
     with gr.Tabs():
-        # --- Tab 1: Voice Clone ---
-        with gr.Tab("Voice Clone"):
+        # --- Tab 1: Text-to-Speech ---
+        with gr.Tab("テキスト読み上げ"):
             gr.Markdown(
                 "Personaタブで作成した人物情報を使って、テキストを読み上げます。"
             )
             with gr.Row():
                 with gr.Column():
+                    current_speaker = gr.Textbox(
+                        label="現在の話者",
+                        value="未選択",
+                        interactive=False,
+                    )
                     vc_prompt = gr.Textbox(
                         label="セリフ生成の指示（Qwen）",
                         lines=2,
@@ -446,14 +486,34 @@ with gr.Blocks(title="Voice Persona") as demo:
                         lines=4,
                         placeholder="クローンした声で読み上げるテキストを入力...",
                     )
-                    vc_btn = gr.Button("生成", variant="primary")
+                    vc_btn = gr.Button("音声を生成", variant="primary")
 
                 with gr.Column():
                     vc_audio = gr.Audio(label="出力音声")
                     vc_time = gr.Textbox(label="生成時間", interactive=False)
 
-        with gr.Tab("Persona"):
+        with gr.Tab("人物作成・管理"):
             gr.Markdown("人物（参照音声とテキスト）を作成・管理します。")
+            with gr.Group():
+                gr.Markdown("#### 登録済みの声")
+                with gr.Row():
+                    persona_voice_dd = gr.Dropdown(
+                        choices=_list_voices(),
+                        label="声を選択",
+                        scale=3,
+                    )
+                    persona_load_btn = gr.Button("読み込み", scale=1)
+                    persona_delete_btn = gr.Button("🗑️ 削除", scale=1, variant="stop")
+            with gr.Group():
+                gr.Markdown("#### 現在の参照音声を登録")
+                with gr.Row():
+                    persona_voice_name = gr.Textbox(
+                        label="登録名",
+                        placeholder="例: MyVoice",
+                        scale=3,
+                    )
+                    persona_save_btn = gr.Button("新規登録", scale=1)
+                    persona_overwrite_btn = gr.Button("上書き保存", scale=1, variant="secondary")
             with gr.Group():
                 gr.Markdown("#### 人物作成")
                 vc_ref_audio = gr.Audio(
@@ -495,26 +555,6 @@ with gr.Blocks(title="Voice Persona") as demo:
                     lines=4,
                     placeholder="この人物らしいサンプル台詞を複数入力",
                 )
-            with gr.Accordion("話者", open=True):
-                with gr.Group():
-                    gr.Markdown("#### 登録済みの声")
-                    with gr.Row():
-                        persona_voice_dd = gr.Dropdown(
-                            choices=_list_voices(),
-                            label="声を選択",
-                            scale=3,
-                        )
-                        persona_load_btn = gr.Button("読み込み", scale=1)
-                        persona_delete_btn = gr.Button("🗑️ 削除", scale=1, variant="stop")
-                with gr.Group():
-                    gr.Markdown("#### 現在の参照音声を登録")
-                    with gr.Row():
-                        persona_voice_name = gr.Textbox(
-                            label="登録名",
-                            placeholder="例: MyVoice",
-                            scale=3,
-                        )
-                        persona_save_btn = gr.Button("登録", scale=1)
 
         with gr.Tab("Model管理"):
             gr.Markdown("生成に使うモデルサイズを選択します。")
@@ -572,7 +612,7 @@ with gr.Blocks(title="Voice Persona") as demo:
         outputs=[vc_text],
     )
     persona_load_btn.click(
-        fn=load_voice,
+        fn=load_voice_for_form,
         inputs=persona_voice_dd,
         outputs=[
             vc_ref_audio,
@@ -583,12 +623,19 @@ with gr.Blocks(title="Voice Persona") as demo:
             persona_speech_habits,
             persona_ng_phrases,
             persona_sample_lines,
+            persona_voice_name,
+            current_speaker,
         ],
+    )
+    persona_voice_dd.change(
+        fn=_speaker_label,
+        inputs=persona_voice_dd,
+        outputs=current_speaker,
     )
     persona_delete_btn.click(
         fn=delete_voice,
         inputs=persona_voice_dd,
-        outputs=persona_voice_dd,
+        outputs=[persona_voice_dd, current_speaker],
     )
     persona_save_btn.click(
         fn=save_voice,
@@ -603,7 +650,22 @@ with gr.Blocks(title="Voice Persona") as demo:
             persona_ng_phrases,
             persona_sample_lines,
         ],
-        outputs=persona_voice_dd,
+        outputs=[persona_voice_dd, current_speaker],
+    )
+    persona_overwrite_btn.click(
+        fn=overwrite_voice,
+        inputs=[
+            persona_voice_dd,
+            vc_ref_audio,
+            vc_ref_text,
+            vc_language,
+            persona_speech_style,
+            persona_phrase_bank,
+            persona_speech_habits,
+            persona_ng_phrases,
+            persona_sample_lines,
+        ],
+        outputs=[persona_voice_dd, current_speaker],
     )
 
 if __name__ == "__main__":
