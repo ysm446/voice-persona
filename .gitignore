@@ -1,0 +1,31 @@
+# IDE設定
+.vscode/
+.idea/
+*.code-workspace
+
+# 仮想環境
+venv/
+env/
+ENV/
+.venv
+
+# モデルファイル（大容量のため除外）
+models/*/
+
+# 登録済み話者データ（個人音声データのため除外）
+persona/*/
+
+# 生成済み音声の一時ファイル
+outputs/
+
+# OS固有
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Local app settings
+settings.json
