@@ -6,6 +6,7 @@ os.environ["HF_HOME"] = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 import json
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +33,7 @@ WRITER_MODELS = {
     "0.6B": "Qwen/Qwen3-0.6B",
     "4B": "Qwen/Qwen3-4B",
     "8B": "Qwen/Qwen3-8B",
+    "Huihui-8B-v2": "huihui-ai/Huihui-Qwen3-8B-abliterated-v2",
     "14B": "Qwen/Qwen3-14B",
 }
 
@@ -40,6 +42,7 @@ WRITER_MODEL_CHOICES = [
     ("1.7B", "1.7B"),
     ("4B", "4B"),
     ("8B", "8B"),
+    ("Huihui 8B v2", "Huihui-8B-v2"),
     ("14B", "14B"),
 ]
 
@@ -269,7 +272,15 @@ def overwrite_voice(
 # MP3 export
 # ---------------------------------------------------------------------------
 
-def _to_mp3(data: np.ndarray, sr: int) -> str:
+def _sanitize_filename_part(value: str | None) -> str:
+    if not value:
+        return "unknown"
+    sanitized = "".join(c if (c.isalnum() or c in ("-", "_")) else "_" for c in value.strip())
+    sanitized = sanitized.strip("_")
+    return sanitized or "unknown"
+
+
+def _to_mp3(data: np.ndarray, sr: int, speaker_name: str | None = None) -> str:
     import lameenc
     # Convert float32 [-1, 1] → int16
     if data.dtype.kind == "f":
@@ -286,10 +297,11 @@ def _to_mp3(data: np.ndarray, sr: int) -> str:
     encoder.set_channels(1)
     encoder.set_quality(2)  # 2 = highest quality
     mp3_bytes = encoder.encode(data.tobytes()) + encoder.flush()
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp3", dir=OUTPUTS_DIR, delete=False)
-    tmp.write(mp3_bytes)
-    tmp.close()
-    return tmp.name
+    speaker = _sanitize_filename_part(speaker_name)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    output_path = OUTPUTS_DIR / f"{speaker}_{timestamp}.mp3"
+    output_path.write_bytes(mp3_bytes)
+    return str(output_path)
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +351,14 @@ def render_model_info(size: str) -> str:
 # Generation
 # ---------------------------------------------------------------------------
 
-def generate_clone(text: str, language: str, ref_audio, ref_text: str, model_size: str):
+def generate_clone(
+    text: str,
+    language: str,
+    ref_audio,
+    ref_text: str,
+    model_size: str,
+    speaker_name: str,
+):
     if not text.strip():
         raise gr.Error("テキストを入力してください。")
     if ref_audio is None:
@@ -362,7 +381,7 @@ def generate_clone(text: str, language: str, ref_audio, ref_text: str, model_siz
         ref_text=ref_text,
     )
     elapsed = time.perf_counter() - t0
-    return _to_mp3(wavs[0], sr), f"{elapsed:.1f} 秒"
+    return _to_mp3(wavs[0], sr, speaker_name=speaker_name), f"{elapsed:.1f} 秒"
 
 
 def transcribe_ref(ref_audio, asr_size: str):
@@ -598,7 +617,7 @@ with gr.Blocks(title="Voice Persona") as demo:
 
     vc_btn.click(
         fn=generate_clone,
-        inputs=[vc_text, vc_language, vc_ref_audio, vc_ref_text, model_size],
+        inputs=[vc_text, vc_language, vc_ref_audio, vc_ref_text, model_size, current_speaker],
         outputs=[vc_audio, vc_time],
     )
     vc_transcribe_btn.click(
