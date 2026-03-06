@@ -1,0 +1,13 @@
+{
+  "name": "voice-persona",
+  "version": "1.0.0",
+  "description": "Voice Persona - TTS with persona profiles",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "install-electron": "npm install"
+  },
+  "devDependencies": {
+    "electron": "^34.0.0"
+  }
+}

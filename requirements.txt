@@ -1,4 +1,5 @@
-gradio>=5.0.0
+flask
+flask-cors
 qwen-tts
 qwen-asr
 torch

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voice Persona</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Voice Persona</h1>
+    <p class="subtitle">人物設定から始める、自然な音声生成</p>
+  </header>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="tts">テキスト読み上げ</button>
+    <button class="tab-btn" data-tab="persona">人物作成・管理</button>
+    <button class="tab-btn" data-tab="models">Model 管理</button>
+  </div>
+
+  <!-- ================================================================
+       Tab 1: TTS
+  ================================================================ -->
+  <div id="tab-tts" class="tab-panel active">
+    <p class="tab-desc">Personaタブで作成した人物情報を使って、テキストを読み上げます。</p>
+
+    <div class="row">
+      <div class="col">
+        <div class="field">
+          <label>話者</label>
+          <div class="row-inline">
+            <select id="tts-speaker-dd" class="flex1"><option value="">-- 選択 --</option></select>
+          </div>
+          <div id="tts-speaker-label" class="speaker-badge">未選択</div>
+        </div>
+
+        <div class="field">
+          <label>セリフ生成の指示（Qwen）</label>
+          <textarea id="tts-prompt" rows="2"
+            placeholder="例: 予算委員会で防衛政策について質問された時に答えそうなセリフ"></textarea>
+          <button id="tts-gen-line-btn" class="btn-secondary">セリフ生成</button>
+        </div>
+
+        <div class="field">
+          <label>読み上げるテキスト</label>
+          <textarea id="tts-text" rows="8"
+            placeholder="クローンした声で読み上げるテキストを入力..."></textarea>
+          <button id="tts-gen-btn" class="btn-primary">音声を生成</button>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="field">
+          <label>出力音声</label>
+          <audio id="tts-audio" controls class="audio-player"></audio>
+        </div>
+        <div class="field">
+          <label>生成時間</label>
+          <div id="tts-elapsed" class="info-text">--</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       Tab 2: Persona Management
+  ================================================================ -->
+  <div id="tab-persona" class="tab-panel">
+    <p class="tab-desc">人物（参照音声とテキスト）を作成・管理します。</p>
+
+    <!-- Registered voices -->
+    <div class="card">
+      <h3>登録済みの声</h3>
+      <div class="row-inline">
+        <select id="persona-dd" class="flex1"><option value="">-- 選択 --</option></select>
+        <button id="persona-load-btn" class="btn-secondary">読み込み</button>
+        <button id="persona-delete-btn" class="btn-danger">削除</button>
+      </div>
+    </div>
+
+    <!-- Save controls -->
+    <div class="card">
+      <h3>登録</h3>
+      <div class="row-inline">
+        <input id="persona-name-input" type="text" placeholder="登録名（例: MyVoice）" class="flex1" />
+        <button id="persona-save-btn" class="btn-primary">新規登録</button>
+        <button id="persona-overwrite-btn" class="btn-secondary">上書き保存</button>
+      </div>
+    </div>
+
+    <!-- Persona form -->
+    <div class="card">
+      <h3>人物作成</h3>
+
+      <div class="field">
+        <label>参照音声</label>
+        <div id="upload-panel">
+          <input type="file" id="ref-audio-file" accept="audio/*" class="file-input" />
+        </div>
+
+        <div id="record-panel">
+          <div class="row-inline">
+            <button id="record-btn" class="btn-record">録音開始</button>
+            <span id="record-status" class="record-status"></span>
+          </div>
+        </div>
+
+        <div id="ref-audio-preview-wrap" class="hidden">
+          <audio id="ref-audio-preview" controls class="audio-player"></audio>
+        </div>
+      </div>
+
+      <div class="field">
+        <button id="transcribe-btn" class="btn-secondary">自動文字起こし (ASR)</button>
+      </div>
+
+      <div class="field">
+        <label>参照音声のトランスクリプト</label>
+        <textarea id="ref-transcript" rows="2"
+          placeholder="参照音声で話されている内容を正確に入力..."></textarea>
+      </div>
+
+      <div class="field">
+        <label>言語</label>
+        <select id="ref-language"></select>
+      </div>
+
+      <div class="field">
+        <label>話し方プロファイル</label>
+        <textarea id="persona-speech-style" rows="6"
+          placeholder="丁寧さ、テンポ、語尾の傾向など"></textarea>
+      </div>
+
+      <div class="field">
+        <label>言い回し集</label>
+        <textarea id="persona-phrase-bank" rows="6"
+          placeholder="よく使う表現を改行区切りで入力"></textarea>
+      </div>
+
+      <div class="field">
+        <label>口癖</label>
+        <textarea id="persona-speech-habits" rows="4"
+          placeholder="繰り返しがちな語句や言い回し"></textarea>
+      </div>
+
+      <div class="field">
+        <label>NG表現</label>
+        <textarea id="persona-ng-phrases" rows="2"
+          placeholder="このPersonaで使わせたくない表現"></textarea>
+      </div>
+
+      <div class="field">
+        <label>サンプル台詞</label>
+        <textarea id="persona-sample-lines" rows="8"
+          placeholder="この人物らしいサンプル台詞を複数入力"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       Tab 3: Model Management
+  ================================================================ -->
+  <div id="tab-models" class="tab-panel">
+    <p class="tab-desc">生成に使うモデルサイズを選択します。</p>
+
+    <div class="card">
+      <h3>Voice Clone モデル（TTS）</h3>
+      <div class="field">
+        <label>モデルサイズ</label>
+        <select id="model-tts-size"></select>
+        <div id="model-tts-info" class="model-info"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>ASR モデル（自動文字起こし）</h3>
+      <div class="field">
+        <label>モデルサイズ</label>
+        <select id="model-asr-size"></select>
+        <div id="model-asr-info" class="model-info"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>セリフ生成モデル（Qwen）</h3>
+      <div class="field">
+        <label>モデルサイズ</label>
+        <select id="model-writer-size"></select>
+        <div id="model-writer-info" class="model-info"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div id="status-bar" class="status-bar hidden">
+    <span id="status-text"></span>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

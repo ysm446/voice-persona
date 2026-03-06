@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 
 echo ==========================================
-echo   voice-echo Starting...
+echo   Voice Persona Starting...
 echo ==========================================
 echo.
 
@@ -39,22 +39,24 @@ if errorlevel 1 (
 echo [OK] conda env "main" activated
 echo.
 
-:: Find first available port starting from 7860
-setlocal enabledelayedexpansion
-set APP_PORT=
-for /L %%P in (7860,1,7960) do (
-    if not defined APP_PORT (
-        powershell -NoProfile -Command "try{$c=New-Object Net.Sockets.TcpClient;$c.Connect('127.0.0.1',%%P);$c.Close();exit 0}catch{exit 1}" >nul 2>&1
-        if errorlevel 1 set APP_PORT=%%P
+:: Install electron dependencies if needed
+if not exist "%~dp0electron\node_modules" (
+    echo [INFO] Installing Electron dependencies...
+    cd /d "%~dp0electron"
+    call npm install
+    if errorlevel 1 (
+        echo [ERROR] npm install failed
+        pause
+        exit /b 1
     )
+    cd /d "%~dp0"
+    echo [OK] Electron dependencies installed
+    echo.
 )
-if not defined APP_PORT set APP_PORT=7860
-echo [OK] Using port !APP_PORT!
-echo.
 
-:: Open browser after 5 seconds on the detected port
-start /b cmd /c "timeout /t 5 /nobreak > nul && start http://localhost:!APP_PORT!"
-
-python app.py
+:: Launch Electron (it will start the Python server internally)
+cd /d "%~dp0electron"
+echo [OK] Launching Electron app...
+npx electron .
 
 pause

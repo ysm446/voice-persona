@@ -10,7 +10,7 @@ ENV/
 .venv
 
 # モデルファイル（大容量のため除外）
-models/*/
+models/*
 
 # 登録済み話者データ（個人音声データのため除外）
 persona/*/
@@ -29,3 +29,6 @@ __pycache__/
 
 # Local app settings
 settings.json
+
+# Electron
+electron/node_modules/
