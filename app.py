@@ -13,6 +13,7 @@ import numpy as np
 import soundfile as sf
 import torch
 import gradio as gr
+import yaml
 from qwen_tts import Qwen3TTSModel
 
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -167,6 +168,46 @@ def _speaker_label(name: str | None) -> str:
     return name if name else "未選択"
 
 
+def _persona_info_path(voice_dir: Path) -> Path:
+    return voice_dir / "info.yaml"
+
+
+def _legacy_persona_info_path(voice_dir: Path) -> Path:
+    return voice_dir / "info.json"
+
+
+def _yaml_dump(data: dict) -> str:
+    class _BlockStyleDumper(yaml.SafeDumper):
+        pass
+
+    def _represent_str(dumper, value: str):
+        style = "|" if "\n" in value else None
+        return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
+
+    _BlockStyleDumper.add_representer(str, _represent_str)
+    return yaml.dump(
+        data,
+        Dumper=_BlockStyleDumper,
+        allow_unicode=True,
+        sort_keys=False,
+        width=1000,
+    )
+
+
+def _write_persona_info(voice_dir: Path, info: dict) -> None:
+    _persona_info_path(voice_dir).write_text(_yaml_dump(info), encoding="utf-8")
+
+
+def _read_persona_info(voice_dir: Path) -> dict:
+    yaml_path = _persona_info_path(voice_dir)
+    if yaml_path.exists():
+        return yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    legacy_path = _legacy_persona_info_path(voice_dir)
+    if legacy_path.exists():
+        return json.loads(legacy_path.read_text(encoding="utf-8"))
+    raise FileNotFoundError(f"Persona info not found: {voice_dir}")
+
+
 def save_voice(
     name: str,
     ref_audio,
@@ -188,20 +229,17 @@ def save_voice(
     voice_dir.mkdir(parents=True, exist_ok=True)
     ref_sr, ref_data = ref_audio
     sf.write(str(voice_dir / "ref.wav"), ref_data, ref_sr)
-    (voice_dir / "info.json").write_text(
-        json.dumps(
-            {
-                "transcript": ref_text,
-                "language": language,
-                "speech_style": speech_style,
-                "phrase_bank": phrase_bank,
-                "speech_habits": speech_habits,
-                "ng_phrases": ng_phrases,
-                "sample_lines": sample_lines,
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    _write_persona_info(
+        voice_dir,
+        {
+            "transcript": ref_text,
+            "language": language,
+            "speech_style": speech_style,
+            "phrase_bank": phrase_bank,
+            "speech_habits": speech_habits,
+            "ng_phrases": ng_phrases,
+            "sample_lines": sample_lines,
+        },
     )
     return gr.Dropdown(choices=_list_voices(), value=name), _speaker_label(name)
 
@@ -225,7 +263,7 @@ def load_voice(name: str):
     _ensure_persona_dir()
     voice_dir = PERSONAS_DIR / name
     data, sr = sf.read(str(voice_dir / "ref.wav"), always_2d=False)
-    info = json.loads((voice_dir / "info.json").read_text(encoding="utf-8"))
+    info = _read_persona_info(voice_dir)
     return (
         (sr, data),
         info.get("transcript", ""),
