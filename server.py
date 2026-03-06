@@ -14,7 +14,7 @@ import numpy as np
 import soundfile as sf
 import torch
 import yaml
-from flask import Flask, request, jsonify, send_file, abort
+from flask import Flask, request, jsonify, send_file, abort, Response, stream_with_context
 from flask_cors import CORS
 from qwen_tts import Qwen3TTSModel
 
@@ -29,15 +29,6 @@ MODEL_VARIANTS = {
 ASR_MODELS = {
     "1.7B": "Qwen/Qwen3-ASR-1.7B",
     "0.6B": "Qwen/Qwen3-ASR-0.6B",
-}
-
-WRITER_MODELS = {
-    "1.7B": "Qwen/Qwen3-1.7B",
-    "0.6B": "Qwen/Qwen3-0.6B",
-    "4B": "Qwen/Qwen3-4B",
-    "8B": "Qwen/Qwen3-8B",
-    "Huihui-8B-v2": "huihui-ai/Huihui-Qwen3-8B-abliterated-v2",
-    "14B": "Qwen/Qwen3-14B",
 }
 
 ASR_LANGUAGE_MAP = {
@@ -61,8 +52,10 @@ LANGUAGES = [
 PERSONAS_DIR = Path(__file__).parent / "persona"
 LEGACY_VOICES_DIR = Path(__file__).parent / "voices"
 OUTPUTS_DIR = Path(__file__).parent / "outputs"
+LLM_DIR = Path(__file__).parent / "models" / "gguf"
 SETTINGS_PATH = Path(__file__).parent / "settings.json"
 OUTPUTS_DIR.mkdir(exist_ok=True)
+LLM_DIR.mkdir(exist_ok=True)
 
 _models: dict = {}
 
@@ -234,19 +227,27 @@ def get_asr_model(size: str):
     return _models[cache_key]
 
 
-def get_writer_model(size: str):
-    size = size if size in WRITER_MODELS else "0.6B"
-    cache_key = f"writer:{size}"
+def _list_gguf_models() -> list[str]:
+    return sorted(f.name for f in LLM_DIR.glob("*.gguf"))
+
+
+def get_llm_model(filename: str):
+    if not filename:
+        raise ValueError("LLMモデルが選択されていません。Model管理タブでGGUFファイルを選択してください。")
+    cache_key = f"llm:{filename}"
     if cache_key not in _models:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        model_id = WRITER_MODELS[size]
-        print(f"[voice-persona] Loading {model_id} ...")
-        tokenizer = AutoTokenizer.from_pretrained(model_id)
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id, torch_dtype=DTYPE, device_map=DEVICE,
+        from llama_cpp import Llama
+        model_path = LLM_DIR / filename
+        if not model_path.exists():
+            raise ValueError(f"モデルファイルが見つかりません: {filename}")
+        print(f"[voice-persona] Loading {filename} ...")
+        _models[cache_key] = Llama(
+            model_path=str(model_path),
+            n_gpu_layers=-1,
+            n_ctx=4096,
+            verbose=False,
         )
-        _models[cache_key] = (model, tokenizer)
-        print(f"[voice-persona] Loaded: {model_id}")
+        print(f"[voice-persona] Loaded: {filename}")
     return _models[cache_key]
 
 
@@ -285,7 +286,7 @@ def _generate_tts(text: str, voice_name: str, model_size: str) -> tuple[str, str
     return Path(mp3_path).name, f"{elapsed:.1f} 秒"
 
 
-def _generate_line(
+def _build_generate_line_args(
     prompt: str,
     language: str,
     speech_style: str,
@@ -293,9 +294,7 @@ def _generate_line(
     speech_habits: str,
     ng_phrases: str,
     sample_lines: str,
-    writer_size: str,
-) -> str:
-    model, tokenizer = get_writer_model(writer_size)
+) -> list[dict]:
     persona_sheet = (
         f"話し方プロファイル:\n{speech_style.strip() or '(未設定)'}\n\n"
         f"言い回し集:\n{phrase_bank.strip() or '(未設定)'}\n\n"
@@ -309,30 +308,73 @@ def _generate_line(
         "地の文や説明は不要で、セリフ本文のみを返してください。"
     )
     user_content = f"{instruction}\n\n[Persona設定]\n{persona_sheet}\n\n[依頼]\n{prompt.strip()}"
-    messages = [
+    return [
         {"role": "system", "content": "You are a dialogue writer for TTS scripts."},
         {"role": "user", "content": user_content},
     ]
-    try:
-        input_text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False,
-        )
-    except TypeError:
-        input_text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True,
-        )
-    inputs = tokenizer([input_text], return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        generated_ids = model.generate(
-            **inputs,
-            max_new_tokens=220,
-            temperature=0.8,
-            top_p=0.9,
-            top_k=30,
-            do_sample=True,
-        )
-    output_ids = generated_ids[0][len(inputs.input_ids[0]):]
-    return tokenizer.decode(output_ids, skip_special_tokens=True).strip()
+
+
+def _stream_tokens(llm, messages: list[dict]):
+    """SSE generator that streams tokens, filtering <think>...</think> blocks."""
+    OPEN_TAG = "<think>"
+    CLOSE_TAG = "</think>"
+    in_think = False
+    buf = ""
+
+    for chunk in llm.create_chat_completion(
+        messages=messages,
+        max_tokens=2048,
+        temperature=0.8,
+        top_p=0.9,
+        top_k=30,
+        stream=True,
+    ):
+        delta = (chunk["choices"][0]["delta"].get("content") or "")
+        if not delta:
+            continue
+        buf += delta
+        output = ""
+
+        while buf:
+            if in_think:
+                idx = buf.find(CLOSE_TAG)
+                if idx >= 0:
+                    buf = buf[idx + len(CLOSE_TAG):]
+                    in_think = False
+                else:
+                    # Keep potential partial closing tag in buffer
+                    keep = next(
+                        (i for i in range(len(CLOSE_TAG) - 1, 0, -1) if buf.endswith(CLOSE_TAG[:i])),
+                        0,
+                    )
+                    buf = buf[-keep:] if keep else ""
+                    break
+            else:
+                idx = buf.find(OPEN_TAG)
+                if idx >= 0:
+                    output += buf[:idx]
+                    buf = buf[idx + len(OPEN_TAG):]
+                    in_think = True
+                else:
+                    # Keep potential partial opening tag in buffer
+                    keep = next(
+                        (i for i in range(len(OPEN_TAG) - 1, 0, -1) if buf.endswith(OPEN_TAG[:i])),
+                        0,
+                    )
+                    if keep:
+                        output += buf[:-keep]
+                        buf = buf[-keep:]
+                    else:
+                        output += buf
+                        buf = ""
+                    break
+
+        if output:
+            yield f"data: {json.dumps({'token': output}, ensure_ascii=False)}\n\n"
+
+    if buf and not in_think:
+        yield f"data: {json.dumps({'token': buf}, ensure_ascii=False)}\n\n"
+    yield "data: [DONE]\n\n"
 
 
 # ---------------------------------------------------------------------------
@@ -457,8 +499,12 @@ def generate_line():
     if not prompt:
         return jsonify({"error": "セリフ生成の指示を入力してください。"}), 400
     settings = _load_settings()
-    writer_size = data.get("writer_size") or settings.get("writer_model_size", "0.6B")
-    text = _generate_line(
+    llm_model = data.get("llm_model") or settings.get("llm_model", "")
+    try:
+        llm = get_llm_model(llm_model)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    messages = _build_generate_line_args(
         prompt=prompt,
         language=data.get("language", "Japanese"),
         speech_style=data.get("speech_style", ""),
@@ -466,9 +512,19 @@ def generate_line():
         speech_habits=data.get("speech_habits", ""),
         ng_phrases=data.get("ng_phrases", ""),
         sample_lines=data.get("sample_lines", ""),
-        writer_size=writer_size,
     )
-    return jsonify({"text": text})
+
+    def sse():
+        yield from _stream_tokens(llm, messages)
+
+    return Response(
+        stream_with_context(sse()),
+        content_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.route("/api/settings")
@@ -477,21 +533,23 @@ def get_settings():
     return jsonify({
         "model_size": settings.get("model_size", "1.7B"),
         "asr_model_size": settings.get("asr_model_size", "0.6B"),
-        "writer_model_size": settings.get("writer_model_size", "0.6B"),
+        "llm_model": settings.get("llm_model", ""),
         "model_variants": list(MODEL_VARIANTS.keys()),
         "asr_models": list(ASR_MODELS.keys()),
-        "writer_models": [
-            {"label": k if not k.startswith("Huihui") else "Huihui 8B v2", "value": k}
-            for k in WRITER_MODELS
-        ],
+        "llm_models": _list_gguf_models(),
         "languages": LANGUAGES,
     })
+
+
+@app.route("/api/llm-models")
+def list_llm_models():
+    return jsonify(_list_gguf_models())
 
 
 @app.route("/api/settings", methods=["POST"])
 def update_settings():
     data = request.json
-    allowed = {"model_size", "asr_model_size", "writer_model_size"}
+    allowed = {"model_size", "asr_model_size", "llm_model"}
     filtered = {k: v for k, v in data.items() if k in allowed}
     _save_settings(filtered)
     return jsonify({"success": True})

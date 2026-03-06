@@ -7,3 +7,4 @@ soundfile
 numpy
 lameenc
 PyYAML
+llama-cpp-python

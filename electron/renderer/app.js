@@ -105,13 +105,8 @@ async function loadSettings() {
   asrEl.value = data.asr_model_size;
   updateModelInfo("asr", data.asr_model_size, data.asr_models);
 
-  // Writer model dropdown
-  const writerEl = document.getElementById("model-writer-size");
-  writerEl.innerHTML = data.writer_models.map(
-    (m) => `<option value="${m.value}">${m.label}</option>`
-  ).join("");
-  writerEl.value = data.writer_model_size;
-  updateWriterModelInfo(data.writer_model_size, data.writer_models);
+  // LLM (GGUF) model dropdown
+  populateLlmDropdown(data.llm_models, data.llm_model);
 
   // Language dropdown in persona tab
   const langEl = document.getElementById("ref-language");
@@ -126,9 +121,16 @@ function updateModelInfo(type, value, variants) {
   if (el) el.textContent = `Qwen/Qwen3-${type.toUpperCase()}-12Hz-${value}-Base`;
 }
 
-function updateWriterModelInfo(value, models) {
-  const el = document.getElementById("model-writer-info");
-  if (el) el.textContent = value;
+function populateLlmDropdown(models, selected) {
+  const el = document.getElementById("model-llm-file");
+  el.innerHTML = '<option value="">-- GGUFファイルを選択 --</option>';
+  models.forEach((m) => {
+    el.innerHTML += `<option value="${m}">${m}</option>`;
+  });
+  if (selected && models.includes(selected)) {
+    el.value = selected;
+    document.getElementById("model-llm-info").textContent = selected;
+  }
 }
 
 async function saveModelSetting(key, value) {
@@ -191,12 +193,15 @@ async function onGenerateLine() {
   if (!prompt) { setStatus("セリフ生成の指示を入力してください。", "error"); return; }
 
   const info = state.ttsPersonaInfo || {};
-  const writerSize = state.settings.writer_model_size || "0.6B";
+  const llmModel = state.settings.llm_model || "";
 
   setStatus("セリフ生成中...", "loading");
   document.getElementById("tts-gen-line-btn").disabled = true;
+  const textEl = document.getElementById("tts-text");
+  textEl.value = "";
+
   try {
-    const data = await apiJSON("/api/generate-line", {
+    const response = await fetch(API_BASE + "/api/generate-line", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -207,10 +212,35 @@ async function onGenerateLine() {
         speech_habits: info.speech_habits || "",
         ng_phrases: info.ng_phrases || "",
         sample_lines: info.sample_lines || "",
-        writer_size: writerSize,
+        llm_model: llmModel,
       }),
     });
-    document.getElementById("tts-text").value = data.text;
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || `HTTP ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let sseBuffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      sseBuffer += decoder.decode(value, { stream: true });
+      const lines = sseBuffer.split("\n");
+      sseBuffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6);
+        if (payload === "[DONE]") break;
+        try {
+          const parsed = JSON.parse(payload);
+          if (parsed.token) textEl.value += parsed.token;
+        } catch {}
+      }
+    }
     clearStatus();
   } catch (e) {
     setStatus(`エラー: ${e.message}`, "error");
@@ -508,10 +538,20 @@ function setupModelControls() {
     await saveModelSetting("asr_model_size", v);
   });
 
-  document.getElementById("model-writer-size").addEventListener("change", async (e) => {
+  document.getElementById("model-llm-file").addEventListener("change", async (e) => {
     const v = e.target.value;
-    document.getElementById("model-writer-info").textContent = v;
-    await saveModelSetting("writer_model_size", v);
+    document.getElementById("model-llm-info").textContent = v || "";
+    state.settings.llm_model = v;
+    await saveModelSetting("llm_model", v);
+  });
+
+  document.getElementById("model-llm-refresh-btn").addEventListener("click", async () => {
+    try {
+      const models = await apiJSON("/api/llm-models");
+      populateLlmDropdown(models, state.settings.llm_model || "");
+    } catch (e) {
+      setStatus(`更新エラー: ${e.message}`, "error");
+    }
   });
 }
 

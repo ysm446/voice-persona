@@ -182,11 +182,14 @@
     </div>
 
     <div class="card">
-      <h3>セリフ生成モデル（Qwen）</h3>
+      <h3>セリフ生成モデル（GGUF）</h3>
+      <p class="tab-desc" style="margin-bottom:10px"><code>models/gguf/</code> フォルダに .gguf ファイルを置いてください。</p>
       <div class="field">
-        <label>モデルサイズ</label>
-        <select id="model-writer-size"></select>
-        <div id="model-writer-info" class="model-info"></div>
+        <div class="row-inline">
+          <select id="model-llm-file" class="flex1"><option value="">-- GGUFファイルを選択 --</option></select>
+          <button id="model-llm-refresh-btn" class="btn-secondary">更新</button>
+        </div>
+        <div id="model-llm-info" class="model-info"></div>
       </div>
     </div>
   </div>
